@@ -84,15 +84,31 @@ const RANGE_CSS = `
    function body would remount the <input> on every keystroke/drag
    tick, which silently breaks click-and-drag on range inputs. */
 
+const NUMBER_FIELD_STYLE = {
+  width: 84, font: "600 14px 'Source Serif 4', Georgia, serif", color: C.ink,
+  border: `1px solid ${C.rule}`, borderRadius: 2, padding: "3px 6px", textAlign: "right",
+  background: C.surface, fontFamily: "inherit",
+};
+
 const SliderField = ({ label, value, onChange, min, max, step = 1, suffix, prefix }) => (
   <div style={{ marginBottom: 15 }}>
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
       <span style={{ fontSize: 11, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted }}>
         {label}
       </span>
-      <span style={{ font: "600 14px 'Source Serif 4', Georgia, serif", color: C.ink }}>
-        {prefix || ""}{Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}{suffix ? ` ${suffix}` : ""}
-      </span>
+      <div style={{ display: "flex", alignItems: "baseline", gap: 4 }}>
+        {prefix && <span style={{ fontSize: 13, color: C.muted }}>{prefix}</span>}
+        <input
+          type="number"
+          value={value}
+          min={min}
+          max={max}
+          step={step}
+          onChange={(e) => onChange(e.target.value)}
+          style={NUMBER_FIELD_STYLE}
+        />
+        {suffix && <span style={{ fontSize: 12, color: C.muted }}>{suffix}</span>}
+      </div>
     </div>
     <input
       type="range" className="mortgage-slider"
@@ -133,6 +149,10 @@ export default function MortgageCalculator() {
   const [extraMonthly, setExtraMonthly] = useState(300);
   const [mode, setMode] = useState("extra"); // "extra" | "refi"
 
+  // taxes & insurance (annual $, applies to both modes)
+  const [annualPropertyTax, setAnnualPropertyTax] = useState(6000);
+  const [annualHomeInsurance, setAnnualHomeInsurance] = useState(1800);
+
   // refinance-specific
   const [remainingMonths, setRemainingMonths] = useState(336);
   const [newRate, setNewRate] = useState(5.6);
@@ -163,6 +183,8 @@ export default function MortgageCalculator() {
       lifetimeDiff: currentAm.totalInterest - newAm.totalInterest,
     };
   }, [principal, rate, remainingMonths, newRate, newTerm, closingCosts, startDate]);
+
+  const monthlyTaxInsurance = (+annualPropertyTax + +annualHomeInsurance) / 12;
 
   const interestSaved = base.totalInterest - withExtra.totalInterest;
   const monthsSaved = base.monthsToPayoff - withExtra.monthsToPayoff;
@@ -226,6 +248,13 @@ export default function MortgageCalculator() {
                 <SliderField label="Closing costs" value={closingCosts} onChange={setClosingCosts} min={0} max={20000} step={250} prefix="$" />
               </>
             )}
+
+            <div style={{ height: 1, background: C.rule, margin: "6px 0 14px" }} />
+            <div style={{ fontSize: 11, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>
+              Home insurance & taxes
+            </div>
+            <SliderField label="Annual property tax" value={annualPropertyTax} onChange={setAnnualPropertyTax} min={0} max={20000} step={100} prefix="$" />
+            <SliderField label="Annual home insurance" value={annualHomeInsurance} onChange={setAnnualHomeInsurance} min={0} max={8000} step={50} prefix="$" />
           </aside>
 
           {/* results */}
@@ -261,13 +290,17 @@ export default function MortgageCalculator() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px,1fr))", gap: 16, marginBottom: 18 }}>
                   <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${C.muted}`, padding: "16px 18px", borderRadius: 2 }}>
                     <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em", color: C.muted }}>Baseline</h4>
-                    <StatRow label="Monthly payment" value={usd(base.payment, true)} />
+                    <StatRow label="Principal & interest" value={usd(base.payment, true)} />
+                    <StatRow label="Tax & insurance" value={usd(monthlyTaxInsurance, true)} />
+                    <StatRow label="Total monthly payment" value={usd(base.payment + monthlyTaxInsurance, true)} strong />
                     <StatRow label="Payoff date" value={fmtMonYr(base.schedule[base.schedule.length - 1]?.date || startDate)} />
                     <StatRow label="Total interest" value={usd(base.totalInterest)} strong color={C.interest} />
                   </div>
                   <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${C.principal}`, padding: "16px 18px", borderRadius: 2 }}>
                     <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em", color: C.principal }}>With extra payment</h4>
-                    <StatRow label="Total monthly payment" value={usd(base.payment + (+extraMonthly), true)} />
+                    <StatRow label="Principal, interest & extra" value={usd(base.payment + (+extraMonthly), true)} />
+                    <StatRow label="Tax & insurance" value={usd(monthlyTaxInsurance, true)} />
+                    <StatRow label="Total monthly payment" value={usd(base.payment + (+extraMonthly) + monthlyTaxInsurance, true)} strong color={C.principal} />
                     <StatRow label="Payoff date" value={fmtMonYr(withExtra.schedule[withExtra.schedule.length - 1]?.date || startDate)} />
                     <StatRow label="Total interest" value={usd(withExtra.totalInterest)} strong color={C.principal} />
                   </div>
@@ -286,12 +319,16 @@ export default function MortgageCalculator() {
                 <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(260px,1fr))", gap: 16, marginBottom: 18 }}>
                   <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${C.muted}`, padding: "16px 18px", borderRadius: 2 }}>
                     <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em", color: C.muted }}>Keep current loan</h4>
-                    <StatRow label="Monthly payment" value={usd(refi.currentPmt, true)} />
+                    <StatRow label="Principal & interest" value={usd(refi.currentPmt, true)} />
+                    <StatRow label="Tax & insurance" value={usd(monthlyTaxInsurance, true)} />
+                    <StatRow label="Total monthly payment" value={usd(refi.currentPmt + monthlyTaxInsurance, true)} strong />
                     <StatRow label="Remaining interest" value={usd(refi.currentInterest)} strong />
                   </div>
                   <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${C.principal}`, padding: "16px 18px", borderRadius: 2 }}>
                     <h4 style={{ margin: "0 0 10px", fontSize: 13, fontWeight: 600, textTransform: "uppercase", letterSpacing: ".04em", color: C.principal }}>Refinance</h4>
-                    <StatRow label="New monthly payment" value={usd(refi.newPmt, true)} />
+                    <StatRow label="New principal & interest" value={usd(refi.newPmt, true)} />
+                    <StatRow label="Tax & insurance" value={usd(monthlyTaxInsurance, true)} />
+                    <StatRow label="New total monthly payment" value={usd(refi.newPmt + monthlyTaxInsurance, true)} strong color={C.principal} />
                     <StatRow label="New total interest" value={usd(refi.newInterest)} strong color={C.principal} />
                   </div>
                 </div>
@@ -315,7 +352,7 @@ export default function MortgageCalculator() {
             )}
 
             <p style={{ marginTop: 18, fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
-              Principal and interest only — excludes property tax, insurance, PMI, and points. Educational tool, not financial advice.
+              Includes principal, interest, property tax, and home insurance. Excludes PMI and points. Educational tool, not financial advice.
             </p>
           </main>
         </div>

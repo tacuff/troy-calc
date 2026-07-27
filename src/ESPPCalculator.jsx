@@ -152,6 +152,40 @@ const Row = ({ label, value, strong, color }) => (
   </div>
 );
 
+const ModeTabButton = ({ id, mode, onSelect, children }) => (
+  <button
+    onClick={() => onSelect(id)}
+    style={{
+      padding: "9px 18px", border: `1px solid ${C.ink}`, background: mode === id ? C.ink : "transparent",
+      color: mode === id ? C.paper : C.ink, borderRadius: 2, fontSize: 13, fontWeight: 600,
+      cursor: "pointer", fontFamily: "'Instrument Sans', system-ui, sans-serif", marginRight: 10,
+    }}
+  >
+    {children}
+  </button>
+);
+
+const cellStyle = { padding: "6px 8px", verticalAlign: "middle" };
+const tableInputStyle = {
+  width: 118, font: "500 12px 'JetBrains Mono', monospace", border: `1px solid ${C.rule}`,
+  borderRadius: 2, padding: "4px 6px", background: C.paper, color: C.ink,
+};
+
+let roundIdSeq = 1;
+const makeRound = (overrides = {}) => ({
+  id: roundIdSeq++,
+  offeringDate: "2024-01-01",
+  purchaseDate: "2024-06-30",
+  saleDate: "2025-08-01",
+  offeringFmv: 50,
+  purchaseFmv: 80,
+  salePrice: 90,
+  shares: 100,
+  discount: 15,
+  lookback: true,
+  ...overrides,
+});
+
 const Panel = ({ title, tag, tagColor, r, headline }) => (
   <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${tagColor}`, padding: "18px 20px 20px", borderRadius: "2px" }}>
     <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
@@ -183,6 +217,46 @@ export default function ESPPCalculator() {
   const [ordRate, setOrdRate] = useState(24);
   const [ltcgRate, setLtcgRate] = useState(15);
   const [stateRate, setStateRate] = useState(0);
+
+  const [mode, setMode] = useState("single"); // "single" | "rounds"
+  const [rounds, setRounds] = useState(() => [
+    makeRound(),
+    makeRound({ offeringDate: "2024-07-01", purchaseDate: "2024-12-31", offeringFmv: 55, purchaseFmv: 70 }),
+  ]);
+
+  const updateRound = (id, field, value) =>
+    setRounds((rs) => rs.map((r) => (r.id === id ? { ...r, [field]: value } : r)));
+  const addRound = () => setRounds((rs) => [...rs, makeRound()]);
+  const removeRound = (id) => setRounds((rs) => (rs.length > 1 ? rs.filter((r) => r.id !== id) : rs));
+
+  const roundResults = useMemo(() => {
+    const rates = { ordinary: ordRate / 100, ltcg: ltcgRate / 100, state: stateRate / 100 };
+    return rounds.map((r) => {
+      const od = parse(r.offeringDate), pd = parse(r.purchaseDate), sdte = parse(r.saleDate);
+      const qualDate = new Date(Math.max(addYears(od, 2).getTime(), addYears(pd, 1).getTime()));
+      const lot = { offeringDate: od, purchaseDate: pd, qualDate };
+      const inputs = {
+        offeringFmv: +r.offeringFmv, purchaseFmv: +r.purchaseFmv,
+        discount: r.discount / 100, shares: +r.shares, lookback: r.lookback,
+      };
+      return { id: r.id, qualDate, ...analyze(inputs, +r.salePrice, sdte, lot, rates) };
+    });
+  }, [rounds, ordRate, ltcgRate, stateRate]);
+
+  const roundTotals = useMemo(
+    () =>
+      roundResults.reduce(
+        (acc, r) => ({
+          ordinary: acc.ordinary + r.ordinary,
+          capital: acc.capital + r.capital,
+          total: acc.total + r.total,
+          net: acc.net + r.net,
+        }),
+        { ordinary: 0, capital: 0, total: 0, net: 0 }
+      ),
+    [roundResults]
+  );
+  const totalShares = useMemo(() => rounds.reduce((s, r) => s + (+r.shares || 0), 0), [rounds]);
 
   const gateInfo = useMemo(() => {
     const od = parse(offeringDate), pd = parse(purchaseDate);
@@ -256,6 +330,13 @@ export default function ESPPCalculator() {
           </p>
         </header>
 
+        <div style={{ display: "flex", marginBottom: 20 }}>
+          <ModeTabButton id="single" mode={mode} onSelect={setMode}>Single lot</ModeTabButton>
+          <ModeTabButton id="rounds" mode={mode} onSelect={setMode}>Multiple rounds</ModeTabButton>
+        </div>
+
+        {mode === "single" && (
+        <>
         {/* signature: holding-period timeline */}
         <div style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "26px 24px 20px", marginBottom: 22, borderRadius: 2 }}>
           <div
@@ -400,12 +481,104 @@ export default function ESPPCalculator() {
             {now.notes.map((n, i) => (
               <p key={i} style={{ margin: "0 0 8px", fontSize: 13, color: C.muted, lineHeight: 1.5, paddingLeft: 14, borderLeft: `2px solid ${C.rule}` }}>{n}</p>
             ))}
-
-            <p style={{ marginTop: 18, fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
-              Federal estimate only. Ignores AMT, the 3.8% net investment income tax, the $3,000 annual capital loss cap, and payroll tax treatment. Educational tool, not tax advice.
-            </p>
           </main>
         </div>
+        </>
+        )}
+
+        {mode === "rounds" && (
+          <div style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "20px 22px 22px", borderRadius: 2, marginBottom: 18 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6, flexWrap: "wrap", gap: 10 }}>
+              <h3 style={{ margin: 0, fontSize: 16, fontWeight: 600 }}>Multiple purchase rounds</h3>
+              <button
+                onClick={addRound}
+                style={{ padding: "7px 14px", border: `1px solid ${C.ink}`, background: C.ink, color: C.paper, borderRadius: 2, fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+              >
+                + Add round
+              </button>
+            </div>
+            <p style={{ margin: "0 0 16px", fontSize: 12, color: C.muted, maxWidth: 640 }}>
+              One row per purchase period. Tax rates below apply to every round.
+            </p>
+
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 1150 }}>
+                <thead>
+                  <tr>
+                    {["Offering date", "Purchase date", "Sale date", "Offering FMV", "Purchase FMV", "Sale price", "Shares", "Discount %", "Lookback", "Status", "Ordinary", "Capital", "Total tax", "Net proceeds", ""].map((h) => (
+                      <th key={h} style={{ textAlign: "left", padding: "6px 8px", borderBottom: `2px solid ${C.rule}`, fontSize: 10, letterSpacing: ".05em", textTransform: "uppercase", color: C.muted, whiteSpace: "nowrap" }}>
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {rounds.map((r) => {
+                    const res = roundResults.find((x) => x.id === r.id);
+                    return (
+                      <tr key={r.id} style={{ borderBottom: `1px solid ${C.rule}` }}>
+                        <td style={cellStyle}><input type="date" value={r.offeringDate} onChange={(e) => updateRound(r.id, "offeringDate", e.target.value)} style={tableInputStyle} /></td>
+                        <td style={cellStyle}><input type="date" value={r.purchaseDate} onChange={(e) => updateRound(r.id, "purchaseDate", e.target.value)} style={tableInputStyle} /></td>
+                        <td style={cellStyle}><input type="date" value={r.saleDate} onChange={(e) => updateRound(r.id, "saleDate", e.target.value)} style={tableInputStyle} /></td>
+                        <td style={cellStyle}><input type="number" value={r.offeringFmv} step="0.5" onChange={(e) => updateRound(r.id, "offeringFmv", e.target.value)} style={{ ...tableInputStyle, width: 70 }} /></td>
+                        <td style={cellStyle}><input type="number" value={r.purchaseFmv} step="0.5" onChange={(e) => updateRound(r.id, "purchaseFmv", e.target.value)} style={{ ...tableInputStyle, width: 70 }} /></td>
+                        <td style={cellStyle}><input type="number" value={r.salePrice} step="0.5" onChange={(e) => updateRound(r.id, "salePrice", e.target.value)} style={{ ...tableInputStyle, width: 70 }} /></td>
+                        <td style={cellStyle}><input type="number" value={r.shares} onChange={(e) => updateRound(r.id, "shares", e.target.value)} style={{ ...tableInputStyle, width: 64 }} /></td>
+                        <td style={cellStyle}><input type="number" value={r.discount} onChange={(e) => updateRound(r.id, "discount", e.target.value)} style={{ ...tableInputStyle, width: 56 }} /></td>
+                        <td style={{ ...cellStyle, textAlign: "center" }}>
+                          <input type="checkbox" checked={r.lookback} onChange={(e) => updateRound(r.id, "lookback", e.target.checked)} style={{ accentColor: C.ink }} />
+                        </td>
+                        <td style={cellStyle}>
+                          <span style={{ fontSize: 10, letterSpacing: ".05em", textTransform: "uppercase", color: res.qualifying ? C.qual : C.disqual, border: `1px solid ${res.qualifying ? C.qual : C.disqual}`, padding: "2px 6px", borderRadius: 2, whiteSpace: "nowrap" }}>
+                            {res.qualifying ? "Qualifying" : "Disqualifying"}
+                          </span>
+                        </td>
+                        <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace" }}>{usd(res.ordinary)}</td>
+                        <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace" }}>{usd(res.capital)}</td>
+                        <td style={{ ...cellStyle, font: "700 12px 'JetBrains Mono', monospace" }}>{usd(res.total)}</td>
+                        <td style={{ ...cellStyle, font: "700 12px 'JetBrains Mono', monospace" }}>{usd(res.net)}</td>
+                        <td style={cellStyle}>
+                          <button
+                            onClick={() => removeRound(r.id)}
+                            disabled={rounds.length <= 1}
+                            title="Remove round"
+                            style={{ border: "none", background: "none", color: C.disqual, cursor: rounds.length > 1 ? "pointer" : "not-allowed", opacity: rounds.length > 1 ? 1 : 0.3, fontSize: 17, lineHeight: 1, padding: 0 }}
+                          >
+                            ×
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={6} style={{ padding: "10px 8px", fontSize: 11, fontWeight: 600, color: C.muted, textTransform: "uppercase", letterSpacing: ".05em" }}>Totals</td>
+                    <td style={{ padding: "10px 8px", font: "700 12px 'JetBrains Mono', monospace" }}>{totalShares}</td>
+                    <td colSpan={2}></td>
+                    <td style={{ padding: "10px 8px", font: "700 12px 'JetBrains Mono', monospace" }}>{usd(roundTotals.ordinary)}</td>
+                    <td style={{ padding: "10px 8px", font: "700 12px 'JetBrains Mono', monospace" }}>{usd(roundTotals.capital)}</td>
+                    <td style={{ padding: "10px 8px", font: "700 12px 'JetBrains Mono', monospace", color: C.disqual }}>{usd(roundTotals.total)}</td>
+                    <td style={{ padding: "10px 8px", font: "700 12px 'JetBrains Mono', monospace", color: C.qual }}>{usd(roundTotals.net)}</td>
+                    <td></td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+
+            <div style={{ height: 1, background: C.rule, margin: "22px 0 16px" }} />
+            <style>{RANGE_CSS}</style>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 20 }}>
+              <SliderField label="Marginal ordinary rate" value={ordRate} onChange={setOrdRate} min={0} max={37} step={1} suffix="%" />
+              <SliderField label="Long-term capital rate" value={ltcgRate} onChange={setLtcgRate} min={0} max={20} step={1} suffix="%" />
+              <SliderField label="State rate" value={stateRate} onChange={setStateRate} min={0} max={13} step={0.5} suffix="%" />
+            </div>
+          </div>
+        )}
+
+        <p style={{ marginTop: 8, fontSize: 11, color: C.muted, lineHeight: 1.6 }}>
+          Federal estimate only. Ignores AMT, the 3.8% net investment income tax, the $3,000 annual capital loss cap, and payroll tax treatment. Educational tool, not tax advice.
+        </p>
       </div>
     </div>
   );
