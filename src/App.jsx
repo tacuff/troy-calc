@@ -2,10 +2,12 @@ import React, { useState, useEffect } from "react";
 import Home from "./Home.jsx";
 import ESPPCalculator from "./ESPPCalculator.jsx";
 import MortgageCalculator from "./MortgageCalculator.jsx";
+import StockRecommendation from "./StockRecommendation.jsx";
 
 const ROUTES = {
   espp: ESPPCalculator,
   mortgage: MortgageCalculator,
+  stocks: StockRecommendation,
 };
 
 function getSlugFromHash() {

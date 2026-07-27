@@ -13,6 +13,11 @@ const TOOLS = [
     title: "Mortgage Amortization Calculator",
     blurb: "See where each payment actually goes, model extra payments against the payoff date, and check whether refinancing breaks even.",
   },
+  {
+    slug: "stocks",
+    title: "Stock Recommendation Engine",
+    blurb: "Blend live analyst ratings with price momentum into a single score per ticker, across a whole watchlist at once.",
+  },
 ];
 
 export default function Home({ onNavigate }) {
