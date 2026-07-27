@@ -79,6 +79,18 @@ function recommendationFor(score) {
 const pct = (n, digits = 1) => (n == null ? "—" : `${n > 0 ? "+" : ""}${n.toFixed(digits)}%`);
 const price = (n) => (n == null ? "—" : `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`);
 
+/* Finnhub returns non-JSON (an HTML redirect/error page) for endpoints
+   the current plan can't access — parse defensively instead of letting
+   res.json() throw a cryptic "Unexpected token '<'" error. */
+async function safeJson(res) {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
+}
+
 async function fetchTicker(ticker, apiKey) {
   const qs = `symbol=${encodeURIComponent(ticker)}&token=${encodeURIComponent(apiKey)}`;
   const [quoteRes, recRes, metricRes] = await Promise.all([
@@ -86,22 +98,30 @@ async function fetchTicker(ticker, apiKey) {
     fetch(`${FINNHUB_BASE}/stock/recommendation-trend?${qs}`),
     fetch(`${FINNHUB_BASE}/stock/metric?${qs}&metric=all`),
   ]);
-  if ([quoteRes.status, recRes.status, metricRes.status].includes(401)) {
+  if ([quoteRes.status, metricRes.status].includes(401)) {
     throw new Error("Invalid API key");
   }
-  if ([quoteRes.status, recRes.status, metricRes.status].includes(429)) {
+  if ([quoteRes.status, metricRes.status].includes(429)) {
     throw new Error("Rate limited — wait a moment and retry");
   }
-  const quote = await quoteRes.json();
-  const recArr = await recRes.json();
-  const metricJson = await metricRes.json();
+  const quote = await safeJson(quoteRes);
+  const metricJson = await safeJson(metricRes);
   if (!quote || (quote.c === 0 && quote.pc === 0)) {
     throw new Error("Ticker not found");
   }
+
+  // Recommendation trends require a paid Finnhub plan on some accounts and
+  // come back as an HTML redirect instead of JSON — don't let that sink the
+  // whole row, just fall back to a momentum-only score.
+  const recArr = recRes.ok ? await safeJson(recRes) : null;
+  const rec = Array.isArray(recArr) && recArr.length ? recArr[0] : null;
+  const analystUnavailable = !rec;
+
   return {
     quote,
-    rec: Array.isArray(recArr) && recArr.length ? recArr[0] : null,
+    rec,
     metric: metricJson?.metric || null,
+    analystUnavailable,
   };
 }
 
@@ -232,8 +252,11 @@ export default function StockRecommendation() {
             <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
               Analyst score: net of strong buy / buy / hold / sell / strong sell counts from the latest ratings period.
             </p>
-            <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, margin: 0 }}>
+            <p style={{ fontSize: 12, color: C.muted, lineHeight: 1.5, margin: "0 0 14px" }}>
               Momentum score: weighted 13/26/52-week price return (50/30/20), normalized against a ±30% swing.
+            </p>
+            <p style={{ fontSize: 12, color: C.sell, lineHeight: 1.5, margin: 0 }}>
+              Note: Finnhub's free tier no longer returns analyst recommendation trends for any ticker. Rows fall back to a momentum-only score until analyst data is available on your plan.
             </p>
             <div style={{ height: 1, background: C.rule, margin: "16px 0" }} />
             <button
@@ -294,7 +317,13 @@ export default function StockRecommendation() {
                               <td style={{ ...cellStyle, font: "600 13px 'JetBrains Mono', monospace" }}>{price(r.quote?.c)}</td>
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace", color: (r.quote?.dp ?? 0) >= 0 ? C.buy : C.sell }}>{pct(r.quote?.dp)}</td>
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>
-                                {r.rec ? `${r.rec.strongBuy}/${r.rec.buy}/${r.rec.hold}/${r.rec.sell}/${r.rec.strongSell}` : "—"}
+                                {r.rec ? (
+                                  `${r.rec.strongBuy}/${r.rec.buy}/${r.rec.hold}/${r.rec.sell}/${r.rec.strongSell}`
+                                ) : (
+                                  <span style={{ color: C.muted, fontStyle: "italic", fontFamily: "'Inter', system-ui, sans-serif" }} title="Finnhub's free tier doesn't return analyst recommendation trends">
+                                    Needs paid plan
+                                  </span>
+                                )}
                               </td>
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace" }}>{pct(r.metric?.["13WeekPriceReturnDaily"])}</td>
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace" }}>{pct(r.metric?.["26WeekPriceReturnDaily"])}</td>
