@@ -1,4 +1,10 @@
-# ESPP Disposition Calculator
+# Finance Calculators
+
+A small site of interactive finance tools, each backed by a tested Python reference engine.
+
+## Tools
+
+**ESPP Disposition Calculator** (`#/espp`)
 
 An interactive tool for the decision most ESPP participants get wrong: sell now, or hold until the sale qualifies?
 
@@ -6,13 +12,23 @@ Employee stock purchase plans have two holding-period gates — two years from t
 
 The calculator models both outcomes side by side and surfaces the cost-basis correction that brokers routinely omit.
 
-## What it does
+**Mortgage Amortization Calculator** (`#/mortgage`)
 
+Shows where each payment actually goes, models extra payments against the payoff date, and compares keeping a current loan against refinancing, including the breakeven point on closing costs.
+
+## What each engine does
+
+**ESPP** (`engine/espp_engine.py`)
 - Computes the purchase price under a lookback provision (lesser of offering and purchase FMV, minus the plan discount)
 - Determines qualifying vs. disqualifying status from the two holding-period gates
 - Splits proceeds into ordinary income and capital gain under the correct rules for each case
 - Flags the Form 8949 basis adjustment — the discount already taxed as W-2 wages, which most 1099-B forms leave out of reported basis
 - Compares selling today against waiting for the qualifying date, holding price constant
+
+**Mortgage** (`engine/mortgage_engine.py`)
+- Standard fixed-rate amortization schedule, month by month
+- Recurring or one-time extra payments, with interest saved and months shaved off
+- Refinance comparison: new payment, lifetime interest difference, and breakeven months on closing costs
 
 ## Structure
 
@@ -20,13 +36,22 @@ The calculator models both outcomes side by side and surfaces the cost-basis cor
 ├── index.html                  page shell, fonts, base styles
 ├── src/
 │   ├── main.jsx                React entry
-│   └── ESPPCalculator.jsx      UI + calculation logic
+│   ├── App.jsx                 hash-based router + back nav
+│   ├── Home.jsx                landing page listing tools
+│   ├── ESPPCalculator.jsx      ESPP tool UI + calculation logic
+│   └── MortgageCalculator.jsx  mortgage tool UI + calculation logic
 └── engine/
-    ├── espp_engine.py          reference implementation
-    └── test_espp_engine.py     19 tests covering the edge cases
+    ├── espp_engine.py          ESPP reference implementation
+    ├── test_espp_engine.py     19 tests
+    ├── mortgage_engine.py      mortgage reference implementation
+    └── test_mortgage_engine.py 16 tests
 ```
 
-The Python engine is the reference implementation. The JavaScript in the component mirrors it exactly; the tests exist to prove the tax logic is right independently of the UI.
+Each Python engine is the reference implementation; the matching JavaScript in the component mirrors it. The tests exist to prove the financial logic is right independently of the UI — 35 tests total.
+
+## Routing
+
+No router library — a small hash-based switch in `App.jsx` (`#/espp`, `#/mortgage`, or no hash for the home page). Swap in `react-router` later if the site grows past a handful of tools.
 
 ## Running locally
 

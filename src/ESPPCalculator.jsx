@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useRef, useCallback } from "react";
 
 /* ---------- date helpers ---------- */
 const parse = (s) => {
@@ -11,6 +11,8 @@ const addYears = (d, n) => {
   c.setUTCFullYear(c.getUTCFullYear() + n);
   return c;
 };
+const addDays = (d, n) => new Date(d.getTime() + n * 86400000);
+const daysBetween = (a, b) => Math.round((b.getTime() - a.getTime()) / 86400000);
 const usd = (n) =>
   (n < 0 ? "-" : "") +
   "$" +
@@ -78,6 +80,96 @@ const C = {
   rule: "#C9D3DC",
 };
 
+const RANGE_CSS = `
+  input[type="range"].espp-slider {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 4px; border-radius: 2px;
+    background: ${C.rule}; outline: none; margin: 8px 0 2px;
+  }
+  input[type="range"].espp-slider::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: ${C.ink}; border: 2px solid ${C.surface};
+    box-shadow: 0 0 0 1px ${C.ink}; cursor: pointer; margin-top: -1px;
+  }
+  input[type="range"].espp-slider::-moz-range-thumb {
+    width: 16px; height: 16px; border-radius: 50%; border: 2px solid ${C.surface};
+    background: ${C.ink}; box-shadow: 0 0 0 1px ${C.ink}; cursor: pointer;
+  }
+  input[type="range"].espp-slider::-moz-range-track { background: ${C.rule}; height: 4px; border-radius: 2px; }
+`;
+
+/* ---------- stable, module-scope subcomponents ----------
+   Defined outside the calculator function so React sees the same
+   component identity across renders. Defining these inside the
+   function body would remount the <input> on every keystroke/drag
+   tick, which silently breaks click-and-drag on range inputs. */
+
+const SliderField = ({ label, value, onChange, min, max, step = 1, suffix, accentColor }) => (
+  <div style={{ marginBottom: 16 }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+      <span style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted }}>
+        {label}
+      </span>
+      <span style={{ font: "600 13px 'JetBrains Mono', monospace", color: accentColor || C.ink }}>
+        {suffix === "$" ? "$" : ""}{Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}{suffix && suffix !== "$" ? suffix : ""}
+      </span>
+    </div>
+    <input
+      type="range" className="espp-slider"
+      min={min} max={max} step={step} value={value}
+      onChange={(e) => onChange(e.target.value)}
+    />
+    <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.muted, marginTop: 2 }}>
+      <span>{suffix === "$" ? "$" : ""}{min}{suffix && suffix !== "$" ? suffix : ""}</span>
+      <span>{suffix === "$" ? "$" : ""}{max}{suffix && suffix !== "$" ? suffix : ""}</span>
+    </div>
+  </div>
+);
+
+const DateField = ({ label, value, onChange }) => (
+  <label style={{ display: "block", marginBottom: 14 }}>
+    <span style={{ display: "block", fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted, marginBottom: 5 }}>
+      {label}
+    </span>
+    <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.rule}`, background: C.surface, borderRadius: 3 }}>
+      <input
+        type="date" value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: "100%", padding: "9px 10px", border: "none", outline: "none", background: "transparent",
+          font: "500 14px 'JetBrains Mono', ui-monospace, monospace", color: C.ink,
+        }}
+      />
+    </div>
+  </label>
+);
+
+const Row = ({ label, value, strong, color }) => (
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderBottom: `1px solid ${C.rule}` }}>
+    <span style={{ fontSize: 13, color: strong ? C.ink : C.muted, fontWeight: strong ? 600 : 400 }}>{label}</span>
+    <span style={{ font: `${strong ? 700 : 500} ${strong ? 17 : 14}px 'JetBrains Mono', monospace`, color: color || C.ink }}>{value}</span>
+  </div>
+);
+
+const Panel = ({ title, tag, tagColor, r, headline }) => (
+  <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${tagColor}`, padding: "18px 20px 20px", borderRadius: "2px" }}>
+    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+      <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: "-.01em" }}>{title}</h3>
+      <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: tagColor, border: `1px solid ${tagColor}`, padding: "2px 7px", borderRadius: 2 }}>
+        {tag}
+      </span>
+    </div>
+    <p style={{ margin: "0 0 14px", fontSize: 12, color: C.muted }}>{headline}</p>
+    <Row label="Ordinary income (W-2)" value={usd(r.ordinary)} />
+    <Row label={`Capital gain (${r.term}-term)`} value={usd(r.capital)} />
+    <Row label="Tax on ordinary" value={usd(r.taxOrd)} />
+    <Row label="Tax on capital" value={usd(r.taxCap)} />
+    <Row label="Total tax" value={usd(r.total)} strong color={tagColor} />
+    <Row label="Net proceeds" value={usd(r.net)} strong />
+  </div>
+);
+
 export default function ESPPCalculator() {
   const [offeringDate, setOfferingDate] = useState("2024-01-01");
   const [purchaseDate, setPurchaseDate] = useState("2024-06-30");
@@ -92,9 +184,15 @@ export default function ESPPCalculator() {
   const [ltcgRate, setLtcgRate] = useState(15);
   const [stateRate, setStateRate] = useState(0);
 
-  const model = useMemo(() => {
-    const od = parse(offeringDate), pd = parse(purchaseDate), sd = parse(saleDate);
+  const gateInfo = useMemo(() => {
+    const od = parse(offeringDate), pd = parse(purchaseDate);
     const qualDate = new Date(Math.max(addYears(od, 2).getTime(), addYears(pd, 1).getTime()));
+    return { od, pd, qualDate };
+  }, [offeringDate, purchaseDate]);
+
+  const model = useMemo(() => {
+    const od = gateInfo.od, pd = gateInfo.pd, sd = parse(saleDate);
+    const qualDate = gateInfo.qualDate;
     const lot = { offeringDate: od, purchaseDate: pd, qualDate };
     const inputs = {
       offeringFmv: +offeringFmv, purchaseFmv: +purchaseFmv,
@@ -105,59 +203,41 @@ export default function ESPPCalculator() {
     const later = analyze(inputs, +salePrice, qualDate, lot, rates);
     const days = Math.max(Math.round((qualDate - sd) / 86400000), 0);
     return { now, later, qualDate, lot, sd, saved: now.total - later.total, days };
-  }, [offeringDate, purchaseDate, saleDate, offeringFmv, purchaseFmv, salePrice, shares, discount, lookback, ordRate, ltcgRate, stateRate]);
+  }, [gateInfo, saleDate, offeringFmv, purchaseFmv, salePrice, shares, discount, lookback, ordRate, ltcgRate, stateRate]);
 
   const { now, later, qualDate, lot, sd, saved, days } = model;
   const accent = now.qualifying ? C.qual : C.disqual;
+  const saleSliderMax = Math.max(daysBetween(gateInfo.pd, qualDate) + 365, 730);
 
   /* timeline geometry */
   const t0 = lot.offeringDate.getTime();
   const tEnd = Math.max(qualDate.getTime(), sd.getTime()) + 30 * 86400000;
   const pos = (d) => ((d.getTime() - t0) / (tEnd - t0)) * 100;
 
-  const Field = ({ label, value, onChange, type = "number", step = "any", suffix }) => (
-    <label style={{ display: "block", marginBottom: 14 }}>
-      <span style={{ display: "block", fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted, marginBottom: 5 }}>
-        {label}
-      </span>
-      <div style={{ display: "flex", alignItems: "center", border: `1px solid ${C.rule}`, background: C.surface, borderRadius: 3 }}>
-        <input
-          type={type} step={step} value={value}
-          onChange={(e) => onChange(e.target.value)}
-          style={{
-            width: "100%", padding: "9px 10px", border: "none", outline: "none", background: "transparent",
-            font: "500 15px 'JetBrains Mono', ui-monospace, monospace", color: C.ink,
-          }}
-        />
-        {suffix && <span style={{ padding: "0 10px", color: C.muted, fontSize: 13 }}>{suffix}</span>}
-      </div>
-    </label>
-  );
+  const timelineRef = useRef(null);
+  const [dragging, setDragging] = useState(false);
 
-  const Row = ({ label, value, strong, color }) => (
-    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "7px 0", borderBottom: `1px solid ${C.rule}` }}>
-      <span style={{ fontSize: 13, color: strong ? C.ink : C.muted, fontWeight: strong ? 600 : 400 }}>{label}</span>
-      <span style={{ font: `${strong ? 700 : 500} ${strong ? 17 : 14}px 'JetBrains Mono', monospace`, color: color || C.ink }}>{value}</span>
-    </div>
-  );
+  const dateFromClientX = useCallback((clientX) => {
+    const el = timelineRef.current;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const frac = Math.min(Math.max((clientX - rect.left) / rect.width, 0), 1);
+    const t = t0 + frac * (tEnd - t0);
+    return new Date(Math.round(t / 86400000) * 86400000);
+  }, [t0, tEnd]);
 
-  const Panel = ({ title, tag, tagColor, r, headline }) => (
-    <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderTop: `3px solid ${tagColor}`, padding: "18px 20px 20px", borderRadius: "2px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
-        <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, letterSpacing: "-.01em" }}>{title}</h3>
-        <span style={{ fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: tagColor, border: `1px solid ${tagColor}`, padding: "2px 7px", borderRadius: 2 }}>
-          {tag}
-        </span>
-      </div>
-      <p style={{ margin: "0 0 14px", fontSize: 12, color: C.muted }}>{headline}</p>
-      <Row label="Ordinary income (W-2)" value={usd(r.ordinary)} />
-      <Row label={`Capital gain (${r.term}-term)`} value={usd(r.capital)} />
-      <Row label="Tax on ordinary" value={usd(r.taxOrd)} />
-      <Row label="Tax on capital" value={usd(r.taxCap)} />
-      <Row label="Total tax" value={usd(r.total)} strong color={tagColor} />
-      <Row label="Net proceeds" value={usd(r.net)} strong />
-    </div>
-  );
+  const onMarkerPointerDown = (e) => {
+    e.preventDefault();
+    setDragging(true);
+    e.target.setPointerCapture(e.pointerId);
+  };
+  const onTimelinePointerMove = (e) => {
+    if (!dragging) return;
+    const d = dateFromClientX(e.clientX);
+    if (d) setSaleDate(fmtDate(d));
+  };
+  const onTimelinePointerUp = () => setDragging(false);
+
 
   return (
     <div style={{ minHeight: "100vh", background: C.paper, color: C.ink, fontFamily: "'Instrument Sans', system-ui, sans-serif", padding: "28px 20px 60px" }}>
@@ -178,9 +258,14 @@ export default function ESPPCalculator() {
 
         {/* signature: holding-period timeline */}
         <div style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "26px 24px 20px", marginBottom: 22, borderRadius: 2 }}>
-          <div style={{ position: "relative", height: 74 }}>
+          <div
+            ref={timelineRef}
+            onPointerMove={onTimelinePointerMove}
+            onPointerUp={onTimelinePointerUp}
+            style={{ position: "relative", height: 74, cursor: dragging ? "grabbing" : "default", touchAction: "none" }}
+          >
             <div style={{ position: "absolute", top: 26, left: 0, right: 0, height: 2, background: C.rule }} />
-            <div style={{ position: "absolute", top: 26, left: 0, width: `${Math.min(pos(sd), 100)}%`, height: 2, background: accent, transition: "width .25s ease" }} />
+            <div style={{ position: "absolute", top: 26, left: 0, width: `${Math.min(pos(sd), 100)}%`, height: 2, background: accent, transition: dragging ? "none" : "width .25s ease" }} />
             {[
               { d: lot.offeringDate, label: "Offering", sub: "grant" },
               { d: lot.purchaseDate, label: "Purchase", sub: "shares bought" },
@@ -192,8 +277,15 @@ export default function ESPPCalculator() {
                 <div style={{ fontSize: 10, color: C.muted, marginTop: 6, fontFamily: "'JetBrains Mono', monospace" }}>{fmtDate(m.d).slice(2)}</div>
               </div>
             ))}
-            {/* sale marker */}
-            <div style={{ position: "absolute", left: `${Math.min(pos(sd), 100)}%`, top: 18, transform: "translateX(-50%)", transition: "left .25s ease" }}>
+            {/* sale marker — draggable */}
+            <div
+              onPointerDown={onMarkerPointerDown}
+              style={{
+                position: "absolute", left: `${Math.min(pos(sd), 100)}%`, top: 18,
+                transform: "translateX(-50%)", transition: dragging ? "none" : "left .25s ease",
+                cursor: dragging ? "grabbing" : "grab", padding: "0 8px", touchAction: "none",
+              }}
+            >
               <div style={{ width: 18, height: 18, borderRadius: "50%", background: accent, border: `3px solid ${C.surface}`, boxShadow: `0 0 0 2px ${accent}` }} />
               <div style={{ fontSize: 10, color: accent, marginTop: 6, fontWeight: 600, whiteSpace: "nowrap", transform: "translateX(-50%)", marginLeft: 9 }}>
                 SALE
@@ -220,23 +312,41 @@ export default function ESPPCalculator() {
 
           {/* inputs */}
           <aside style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "18px 18px 8px", borderRadius: 2 }}>
-            <Field label="Offering date" value={offeringDate} onChange={setOfferingDate} type="date" />
-            <Field label="Purchase date" value={purchaseDate} onChange={setPurchaseDate} type="date" />
-            <Field label="Sale date" value={saleDate} onChange={setSaleDate} type="date" />
+            <style>{RANGE_CSS}</style>
+            <DateField label="Offering date" value={offeringDate} onChange={setOfferingDate} />
+            <DateField label="Purchase date" value={purchaseDate} onChange={setPurchaseDate} />
+
+            <div style={{ marginBottom: 16 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 4 }}>
+                <span style={{ fontSize: 11, letterSpacing: ".08em", textTransform: "uppercase", color: C.muted }}>Sale date</span>
+                <span style={{ font: "600 13px 'JetBrains Mono', monospace", color: accent }}>{fmtDate(sd)}</span>
+              </div>
+              <input
+                type="range" className="espp-slider"
+                min={0} max={saleSliderMax} step={1}
+                value={Math.min(Math.max(daysBetween(gateInfo.pd, sd), 0), saleSliderMax)}
+                onChange={(e) => setSaleDate(fmtDate(addDays(gateInfo.pd, +e.target.value)))}
+              />
+              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 10, color: C.muted, marginTop: 2 }}>
+                <span>Purchase</span>
+                <span>Qualifying + 1yr</span>
+              </div>
+            </div>
+
             <div style={{ height: 1, background: C.rule, margin: "4px 0 16px" }} />
-            <Field label="Price on offering date" value={offeringFmv} onChange={setOfferingFmv} suffix="$" />
-            <Field label="Price on purchase date" value={purchaseFmv} onChange={setPurchaseFmv} suffix="$" />
-            <Field label="Sale price" value={salePrice} onChange={setSalePrice} suffix="$" />
-            <Field label="Shares" value={shares} onChange={setShares} />
-            <Field label="Plan discount" value={discount} onChange={setDiscount} suffix="%" />
+            <SliderField label="Price on offering date" value={offeringFmv} onChange={setOfferingFmv} min={1} max={300} step={0.5} suffix="$" />
+            <SliderField label="Price on purchase date" value={purchaseFmv} onChange={setPurchaseFmv} min={1} max={300} step={0.5} suffix="$" />
+            <SliderField label="Sale price" value={salePrice} onChange={setSalePrice} min={1} max={300} step={0.5} suffix="$" accentColor={accent} />
+            <SliderField label="Shares" value={shares} onChange={setShares} min={1} max={2000} step={1} />
+            <SliderField label="Plan discount" value={discount} onChange={setDiscount} min={5} max={15} step={1} suffix="%" />
             <label style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 16, fontSize: 13, color: C.muted, cursor: "pointer" }}>
               <input type="checkbox" checked={lookback} onChange={(e) => setLookback(e.target.checked)} style={{ accentColor: C.ink }} />
               Plan has a lookback provision
             </label>
             <div style={{ height: 1, background: C.rule, margin: "0 0 16px" }} />
-            <Field label="Marginal ordinary rate" value={ordRate} onChange={setOrdRate} suffix="%" />
-            <Field label="Long-term capital rate" value={ltcgRate} onChange={setLtcgRate} suffix="%" />
-            <Field label="State rate" value={stateRate} onChange={setStateRate} suffix="%" />
+            <SliderField label="Marginal ordinary rate" value={ordRate} onChange={setOrdRate} min={0} max={37} step={1} suffix="%" />
+            <SliderField label="Long-term capital rate" value={ltcgRate} onChange={setLtcgRate} min={0} max={20} step={1} suffix="%" />
+            <SliderField label="State rate" value={stateRate} onChange={setStateRate} min={0} max={13} step={0.5} suffix="%" />
           </aside>
 
           {/* results */}
