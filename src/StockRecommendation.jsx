@@ -38,7 +38,14 @@ const RANGE_CSS = `
 `;
 
 const API_KEY_STORAGE = "finnhub_api_key";
+const FMP_KEY_STORAGE = "fmp_api_key";
 const FINNHUB_BASE = "https://finnhub.io/api/v1";
+const FMP_BASE = "https://financialmodelingprep.com/stable";
+// FMP's docs describe a "Stock Grades Summary" endpoint with this exact
+// shape (strongBuy/buy/hold/sell/strongSell counts), but their demo key is
+// dead and their docs pages block scraping, so the exact free-tier path
+// couldn't be confirmed live. Try both plausible slugs; first match wins.
+const FMP_CONSENSUS_PATHS = ["grades-consensus", "grades-summary"];
 
 /* ---------- pure scoring engine ---------- */
 function analystScore(rec) {
@@ -91,7 +98,34 @@ async function safeJson(res) {
   }
 }
 
-async function fetchTicker(ticker, apiKey) {
+function normalizeConsensus(row) {
+  if (!row || typeof row.strongBuy !== "number") return null;
+  const { strongBuy, buy, hold, sell, strongSell } = row;
+  return { strongBuy, buy, hold, sell, strongSell };
+}
+
+// Fallback analyst source when Finnhub's free tier won't return it. Tries
+// each candidate FMP endpoint slug in turn since the exact free-tier path
+// couldn't be verified live; returns null (never throws) on any failure so
+// a wrong guess just leaves analyst data unavailable rather than breaking
+// the row.
+async function fetchFmpConsensus(ticker, fmpApiKey) {
+  if (!fmpApiKey) return null;
+  for (const path of FMP_CONSENSUS_PATHS) {
+    try {
+      const res = await fetch(`${FMP_BASE}/${path}?symbol=${encodeURIComponent(ticker)}&apikey=${encodeURIComponent(fmpApiKey)}`);
+      if (!res.ok) continue;
+      const data = await safeJson(res);
+      const row = normalizeConsensus(Array.isArray(data) ? data[0] : data);
+      if (row) return row;
+    } catch {
+      // try the next candidate path
+    }
+  }
+  return null;
+}
+
+async function fetchTicker(ticker, apiKey, fmpApiKey) {
   const qs = `symbol=${encodeURIComponent(ticker)}&token=${encodeURIComponent(apiKey)}`;
   const [quoteRes, recRes, metricRes] = await Promise.all([
     fetch(`${FINNHUB_BASE}/quote?${qs}`),
@@ -110,11 +144,17 @@ async function fetchTicker(ticker, apiKey) {
     throw new Error("Ticker not found");
   }
 
-  // Recommendation trends require a paid Finnhub plan on some accounts and
+  // Recommendation trends require a paid Finnhub plan on most accounts and
   // come back as an HTML redirect instead of JSON — don't let that sink the
-  // whole row, just fall back to a momentum-only score.
+  // whole row. Try Finnhub first (works if you're on a paid plan), then an
+  // optional FMP key as a free-tier fallback, then give up gracefully.
   const recArr = recRes.ok ? await safeJson(recRes) : null;
-  const rec = Array.isArray(recArr) && recArr.length ? recArr[0] : null;
+  let rec = Array.isArray(recArr) && recArr.length ? recArr[0] : null;
+  let analystSource = rec ? "finnhub" : null;
+  if (!rec) {
+    rec = await fetchFmpConsensus(ticker, fmpApiKey);
+    if (rec) analystSource = "fmp";
+  }
   const analystUnavailable = !rec;
 
   return {
@@ -122,6 +162,7 @@ async function fetchTicker(ticker, apiKey) {
     rec,
     metric: metricJson?.metric || null,
     analystUnavailable,
+    analystSource,
   };
 }
 
@@ -157,12 +198,16 @@ const makeRow = (ticker = "") => ({ id: rowIdSeq++, ticker, status: "idle", erro
 
 export default function StockRecommendation() {
   const [apiKey, setApiKey] = useState(() => localStorage.getItem(API_KEY_STORAGE) || "");
+  const [fmpApiKey, setFmpApiKey] = useState(() => localStorage.getItem(FMP_KEY_STORAGE) || "");
   const [analystWeightPct, setAnalystWeightPct] = useState(50);
   const [rows, setRows] = useState(() => [makeRow("AAPL"), makeRow("MSFT"), makeRow("GOOGL")]);
 
   useEffect(() => {
     localStorage.setItem(API_KEY_STORAGE, apiKey);
   }, [apiKey]);
+  useEffect(() => {
+    localStorage.setItem(FMP_KEY_STORAGE, fmpApiKey);
+  }, [fmpApiKey]);
 
   const updateTicker = (id, value) =>
     setRows((rs) => rs.map((r) => (r.id === id ? { ...r, ticker: value.toUpperCase() } : r)));
@@ -179,13 +224,13 @@ export default function StockRecommendation() {
       }
       setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: "loading", error: null } : r)));
       try {
-        const data = await fetchTicker(row.ticker.trim(), apiKey.trim());
+        const data = await fetchTicker(row.ticker.trim(), apiKey.trim(), fmpApiKey.trim());
         setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: "ok", error: null, ...data } : r)));
       } catch (err) {
         setRows((rs) => rs.map((r) => (r.id === id ? { ...r, status: "error", error: err.message } : r)));
       }
     },
-    [rows, apiKey]
+    [rows, apiKey, fmpApiKey]
   );
 
   const fetchAll = () => rows.forEach((r) => r.ticker.trim() && fetchOne(r.id));
@@ -207,12 +252,12 @@ export default function StockRecommendation() {
             Analyst consensus meets price momentum
           </h1>
           <p style={{ margin: "10px 0 0", maxWidth: 620, fontSize: 15, color: C.muted, lineHeight: 1.55 }}>
-            Blends live Wall Street analyst ratings with 13/26/52-week price momentum into a single score per ticker. Data comes from Finnhub's free API — bring your own key.
+            Blends live Wall Street analyst ratings with 13/26/52-week price momentum into a single score per ticker. Price and momentum come from Finnhub; analyst ratings from Finnhub or, as a free-tier fallback, Financial Modeling Prep — bring your own keys.
           </p>
         </header>
 
-        {/* API key */}
-        <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2, padding: "16px 18px", marginBottom: 18, display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+        {/* API keys */}
+        <div style={{ background: C.surface, border: `1px solid ${C.rule}`, borderRadius: 2, padding: "16px 18px", marginBottom: 18, display: "flex", gap: 14, alignItems: "flex-start", flexWrap: "wrap" }}>
           <div style={{ flex: "1 1 260px" }}>
             <label style={{ display: "block", fontSize: 11, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 6 }}>
               Finnhub API key
@@ -224,10 +269,27 @@ export default function StockRecommendation() {
               placeholder="Paste your free API key"
               style={{ width: "100%", boxSizing: "border-box", font: "500 13px 'JetBrains Mono', monospace", border: `1px solid ${C.rule}`, borderRadius: 2, padding: "8px 10px", background: C.paper, color: C.ink }}
             />
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: C.muted, lineHeight: 1.4 }}>
+              Price and momentum. Get a free key at <span style={{ textDecoration: "underline" }}>finnhub.io/register</span>.
+            </p>
           </div>
-          <p style={{ margin: 0, fontSize: 12, color: C.muted, maxWidth: 360, lineHeight: 1.5 }}>
-            Stored only in this browser's local storage — never sent anywhere but Finnhub. Get a free key at{" "}
-            <span style={{ textDecoration: "underline" }}>finnhub.io/register</span>.
+          <div style={{ flex: "1 1 260px" }}>
+            <label style={{ display: "block", fontSize: 11, letterSpacing: ".07em", textTransform: "uppercase", color: C.muted, marginBottom: 6 }}>
+              FMP API key <span style={{ textTransform: "none", letterSpacing: 0 }}>(optional)</span>
+            </label>
+            <input
+              type="text"
+              value={fmpApiKey}
+              onChange={(e) => setFmpApiKey(e.target.value)}
+              placeholder="Paste a free Financial Modeling Prep key"
+              style={{ width: "100%", boxSizing: "border-box", font: "500 13px 'JetBrains Mono', monospace", border: `1px solid ${C.rule}`, borderRadius: 2, padding: "8px 10px", background: C.paper, color: C.ink }}
+            />
+            <p style={{ margin: "6px 0 0", fontSize: 11, color: C.muted, lineHeight: 1.4 }}>
+              Analyst ratings, since Finnhub's free tier no longer includes them. Get a free key at <span style={{ textDecoration: "underline" }}>site.financialmodelingprep.com</span>.
+            </p>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: C.muted, maxWidth: 300, lineHeight: 1.5, flex: "1 1 220px" }}>
+            Both keys are stored only in this browser's local storage — never sent anywhere but their respective APIs.
           </p>
         </div>
 
@@ -256,7 +318,7 @@ export default function StockRecommendation() {
               Momentum score: weighted 13/26/52-week price return (50/30/20), normalized against a ±30% swing.
             </p>
             <p style={{ fontSize: 12, color: C.sell, lineHeight: 1.5, margin: 0 }}>
-              Note: Finnhub's free tier no longer returns analyst recommendation trends for any ticker. Rows fall back to a momentum-only score until analyst data is available on your plan.
+              Note: Finnhub's free tier no longer returns analyst recommendation trends. Add a free FMP key above for a fallback source, or rows fall back to a momentum-only score.
             </p>
             <div style={{ height: 1, background: C.rule, margin: "16px 0" }} />
             <button
@@ -318,10 +380,15 @@ export default function StockRecommendation() {
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace", color: (r.quote?.dp ?? 0) >= 0 ? C.buy : C.sell }}>{pct(r.quote?.dp)}</td>
                               <td style={{ ...cellStyle, font: "500 12px 'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>
                                 {r.rec ? (
-                                  `${r.rec.strongBuy}/${r.rec.buy}/${r.rec.hold}/${r.rec.sell}/${r.rec.strongSell}`
+                                  <>
+                                    {`${r.rec.strongBuy}/${r.rec.buy}/${r.rec.hold}/${r.rec.sell}/${r.rec.strongSell}`}
+                                    {r.analystSource === "fmp" && (
+                                      <span style={{ color: C.muted, fontSize: 10, marginLeft: 5, fontFamily: "'Inter', system-ui, sans-serif" }}>(FMP)</span>
+                                    )}
+                                  </>
                                 ) : (
                                   <span style={{ color: C.muted, fontStyle: "italic", fontFamily: "'Inter', system-ui, sans-serif" }} title="Finnhub's free tier doesn't return analyst recommendation trends">
-                                    Needs paid plan
+                                    {fmpApiKey.trim() ? "Unavailable" : "Add FMP key"}
                                   </span>
                                 )}
                               </td>

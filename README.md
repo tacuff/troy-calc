@@ -18,7 +18,7 @@ Shows where each payment actually goes, models extra payments against the payoff
 
 **Stock Recommendation Engine** (`#/stocks`)
 
-A watchlist table that blends live analyst ratings with price momentum into a single score per ticker. Add tickers, fetch live data, and adjust the analyst-vs-momentum weighting to see how the recommendation shifts.
+A watchlist table that blends live analyst ratings with price momentum into a single score per ticker. Add tickers, fetch live data, and adjust the analyst-vs-momentum weighting to see how the recommendation shifts. Price and momentum come from Finnhub; analyst ratings try Finnhub first and fall back to Financial Modeling Prep's free tier if you add an optional second key, since Finnhub stopped including ratings on its free plan.
 
 ## What each engine does
 
@@ -50,7 +50,7 @@ A watchlist table that blends live analyst ratings with price momentum into a si
 │   ├── Home.jsx                landing page listing tools
 │   ├── ESPPCalculator.jsx      ESPP tool UI + calculation logic
 │   ├── MortgageCalculator.jsx  mortgage tool UI + calculation logic
-│   └── StockRecommendation.jsx stock recommendation tool UI + Finnhub calls + scoring logic
+│   └── StockRecommendation.jsx stock recommendation tool UI + Finnhub/FMP calls + scoring logic
 └── engine/
     ├── espp_engine.py          ESPP reference implementation
     ├── test_espp_engine.py     19 tests
@@ -81,7 +81,7 @@ pytest -v
 
 ## Deploying
 
-The app is entirely client-side — no server, no database, and no build-time API keys. Any static host works. The one exception: the Stock Recommendation Engine calls Finnhub's API directly from the browser using a key each visitor pastes in themselves, stored only in that browser's `localStorage`. Nothing is bundled or committed — there's nothing to configure at deploy time.
+The app is entirely client-side — no server, no database, and no build-time API keys. Any static host works. The one exception: the Stock Recommendation Engine calls Finnhub's and (optionally) Financial Modeling Prep's APIs directly from the browser using keys each visitor pastes in themselves, stored only in that browser's `localStorage`. Nothing is bundled or committed — there's nothing to configure at deploy time.
 
 **Vercel:** push to GitHub, import the repo at vercel.com. It detects Vite and needs no configuration.
 
@@ -103,7 +103,7 @@ The app is entirely client-side — no server, no database, and no build-time AP
 
 This is an educational tool, not tax advice. Verify against your Form 3922 and talk to a CPA before acting on it.
 
-**Stock recommendation engine:** a scoring heuristic, not a licensed recommendation. Depends entirely on Finnhub's free tier for analyst ratings and price-return data, which can be delayed, incomplete, or missing for some tickers. Educational tool, not investment advice — it should never be the sole basis for a trade.
+**Stock recommendation engine:** a scoring heuristic, not a licensed recommendation. Price and momentum depend on Finnhub's free tier; analyst ratings depend on Finnhub (paid plans) or an optional Financial Modeling Prep key, and may be delayed, incomplete, or missing for some tickers either way. The FMP fallback endpoint was chosen from its public docs and CORS headers rather than a live-tested key — if it stops matching FMP's actual free-tier response shape, rows degrade to a momentum-only score rather than breaking. Educational tool, not investment advice — it should never be the sole basis for a trade.
 
 ## License
 
