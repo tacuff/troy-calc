@@ -14,6 +14,11 @@ const C = {
 };
 
 const RANGE_CSS = `
+  .tool-grid { min-width: 0; }
+  .tool-grid > aside, .tool-grid > main { min-width: 0; }
+  @media (max-width: 720px) {
+    .tool-grid { grid-template-columns: 1fr !important; }
+  }
   input[type="range"].stock-slider {
     -webkit-appearance: none; appearance: none;
     width: 100%; height: 4px; border-radius: 2px;
@@ -206,7 +211,7 @@ export default function StockRecommendation() {
           </p>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(230px, 280px) 1fr", gap: 20, alignItems: "start" }}>
+        <div className="tool-grid" style={{ display: "grid", gridTemplateColumns: "minmax(230px, 280px) 1fr", gap: 20, alignItems: "start" }}>
           {/* controls */}
           <aside style={{ background: C.surface, border: `1px solid ${C.rule}`, padding: "16px 16px 4px", borderRadius: 2 }}>
             <div style={{ marginBottom: 16 }}>
