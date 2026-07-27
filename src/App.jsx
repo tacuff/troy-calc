@@ -10,6 +10,13 @@ const ROUTES = {
   stocks: StockRecommendation,
 };
 
+const TITLES = {
+  espp: "ESPP Disposition Calculator",
+  mortgage: "Mortgage Amortization Calculator",
+  stocks: "Stock Recommendation Engine",
+};
+const DEFAULT_TITLE = "Finance Calculators";
+
 function getSlugFromHash() {
   const h = window.location.hash.replace(/^#\/?/, "");
   return ROUTES[h] ? h : null;
@@ -24,13 +31,17 @@ export default function App() {
     return () => window.removeEventListener("hashchange", onHashChange);
   }, []);
 
+  useEffect(() => {
+    document.title = TITLES[slug] || DEFAULT_TITLE;
+  }, [slug]);
+
   const navigate = (s) => {
     window.location.hash = s ? `/${s}` : "";
     setSlug(s);
   };
 
   const BackBar = () => (
-    <div style={{ position: "fixed", top: 14, left: 14, zIndex: 10 }}>
+    <div style={{ padding: "14px 14px 0" }}>
       <button
         onClick={() => navigate(null)}
         style={{
